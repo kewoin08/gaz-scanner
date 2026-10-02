@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Gaz scanner</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+--bg:#e9edf1;--panel:#fff;--ink:#16202c;--mute:#5d6b7a;--line:#c9d2db;--acc:#0b5fff;--onacc:#fff;--ok:#0a7d4b}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#10161d;--panel:#1a222c;--ink:#e8eef4;--mute:#93a1b0;--line:#2c3947;--acc:#5b9bff;--onacc:#06101f;--ok:#4cc38a}}
+:root[data-theme="dark"]{--bg:#10161d;--panel:#1a222c;--ink:#e8eef4;--mute:#93a1b0;--line:#2c3947;--acc:#5b9bff;--onacc:#06101f;--ok:#4cc38a}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*,*:before,*:after{box-sizing:inherit}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 "Segoe UI",system-ui,Roboto,sans-serif}
+main{max-width:640px;margin:0 auto;padding:16px}
+h1{font-size:1.4rem;margin:4px 0 14px;letter-spacing:-.01em}
+h2{font-size:1rem;margin:22px 0 8px}
+button{font:inherit;border:0;border-radius:8px;padding:12px 16px;background:var(--acc);color:var(--onacc);font-weight:600;cursor:pointer}
+button.sec{background:transparent;color:var(--ink);border:1px solid var(--line)}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.row>*{flex:1}
+#cam{position:relative;background:#000;border-radius:10px;overflow:hidden;aspect-ratio:4/3;display:none}
+#cam.on{display:block}
+#cam video{width:100%;height:100%;object-fit:cover}
+#cam:after{content:"";position:absolute;left:10%;right:10%;top:50%;height:2px;background:#ff3b30;box-shadow:0 0 8px #ff3b30}
+#html5reader{width:100%}
+#manual{text-transform:uppercase}
+input,select,textarea{width:100%;font:inherit;padding:11px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink)}
+.manual{display:flex;gap:8px;margin-top:10px}
+.manual button{flex:none}
+#msg{min-height:1.4em;color:var(--mute);margin:8px 0 0;font-size:.95rem}
+.wrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.88rem;background:var(--panel);border-radius:8px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+td.c{white-space:normal;min-width:140px}
+td.code{font-family:ui-monospace,Consolas,monospace}
+dialog{border:0;border-radius:12px;padding:18px;width:min(92vw,520px);background:var(--panel);color:var(--ink)}
+dialog::backdrop{background:rgba(0,0,0,.55)}
+.big{font:600 1.35rem ui-monospace,Consolas,monospace;word-break:break-all;margin:2px 0}
+.info{margin:6px 0 12px;padding:10px;border-left:4px solid var(--acc);background:var(--bg);font-size:.92rem}
+.info b{display:inline-block;min-width:5.5em}
+label{display:block;font-weight:600;margin:8px 0 6px}
+.empty{color:var(--mute);padding:14px 0}
+#dComFree{margin-top:8px;display:none}
+</style>
+</head>
+<body>
+<main>
+<h1>Gaz scanner</h1>
+
+<div class="row">
+  <button id="scan">Scanner un code</button>
+  <button id="stop" class="sec" hidden>Arrêter</button>
+</div>
+<div id="cam"><video id="vid" playsinline muted></video></div>
+<div id="html5reader"></div>
+<div class="manual">
+  <input id="manual" inputmode="text" autocapitalize="characters" spellcheck="false" autocomplete="off" placeholder="Ou saisir le code à la main" aria-label="Code saisi à la main">
+  <button id="addManual" class="sec">Valider</button>
+</div>
+<p id="msg" role="status"></p>
+
+<h2>Enregistrements (<span id="n">0</span>)</h2>
+<div class="row">
+  <button id="csv">Télécharger le CSV</button>
+  <button id="copy" class="sec">Copier le CSV</button>
+  <button id="clear" class="sec">Vider</button>
+</div>
+<div class="wrap" style="margin-top:10px"><div id="list"></div></div>
+</main>
+
+<dialog id="dlg">
+  <div class="big" id="dCode"></div>
+  <div class="info" id="dInfo"></div>
+  <label for="dCom">Commentaire</label>
+  <select id="dCom"></select>
+  <input id="dComFree" inputmode="text" autocapitalize="characters" spellcheck="false" autocomplete="off" placeholder="Tapez votre commentaire libre" aria-label="Commentaire libre">
+  <div class="row" style="margin-top:14px">
+    <button id="save">Enregistrer</button>
+    <button id="cancel" class="sec">Annuler</button>
+  </div>
+</dialog>
+
+<script>
+(function(){
+var KEY="registre-codes-barres", rows=[], cur=null, stream=null, timer=null, h5=null;
+var $=function(i){return document.getElementById(i)};
+
+try{rows=JSON.parse(localStorage.getItem(KEY)||"[]")}catch(e){rows=[]}
+function persist(){try{localStorage.setItem(KEY,JSON.stringify(rows))}catch(e){}}
+function say(t){$("msg").textContent=t}
+
+/* --- Interprétation du code --- */
+var P=[[0,139,"États-Unis / Canada"],[300,379,"France"],[380,380,"Bulgarie"],[400,440,"Allemagne"],[450,459,"Japon"],[490,499,"Japon"],[500,509,"Royaume-Uni"],[539,539,"Irlande"],[540,549,"Belgique / Luxembourg"],[560,560,"Portugal"],[569,569,"Islande"],[570,579,"Danemark"],[590,590,"Pologne"],[600,601,"Afrique du Sud"],[611,611,"Maroc"],[619,619,"Tunisie"],[690,699,"Chine"],[729,729,"Israël"],[730,739,"Suède"],[750,750,"Mexique"],[760,769,"Suisse"],[789,790,"Brésil"],[800,839,"Italie"],[840,849,"Espagne"],[870,879,"Pays-Bas"],[880,880,"Corée du Sud"],[885,885,"Thaïlande"],[888,888,"Singapour"],[890,890,"Inde"],[893,893,"Vietnam"],[900,919,"Autriche"],[930,939,"Australie"],[940,949,"Nouvelle-Zélande"]];
+function checkOK(d){
+  var s=0,n=d.length;
+  for(var i=0;i<n-1;i++){var v=+d[n-2-i];s+=(i%2===0?3:1)*v}
+  return ((10-s%10)%10)===+d[n-1];
+}
+function analyse(code,fmt){
+  var out=[], d=/^\d+$/.test(code);
+  var f=(fmt||"").toUpperCase().replace(/_/g,"-");
+  if(f)out.push(["Format",f]);
+  if(!d){out.push(["Type","Code alphanumérique (pas de contrôle possible)"]);return out}
+  var L=code.length;
+  if(L===13||L===12||L===8){
+    var nom=L===13?"EAN-13":L===12?"UPC-A":"EAN-8";
+    out.push(["Type",nom]);
+    out.push(["Clé",checkOK(code)?"Valide":"Invalide (lecture douteuse)"]);
+    if(L===13){
+      var p=+code.slice(0,3);
+      if(p===978||p===979)out.push(["Contenu","Livre (ISBN)"]);
+      else if(p===977)out.push(["Contenu","Périodique (ISSN)"]);
+      else if(p>=20&&p<=29)out.push(["Contenu","Usage interne magasin"]);
+      else if(p>=980&&p<=983)out.push(["Contenu","Bon de réduction / remboursement"]);
+      else{
+        var c="Inconnue";
+        for(var i=0;i<P.length;i++)if(p>=P[i][0]&&p<=P[i][1]){c=P[i][2];break}
+        out.push(["Préfixe GS1",code.slice(0,3)+" : "+c+" (pays d'enregistrement)"]);
+      }
+      out.push(["Entreprise+produit",code.slice(3,12)]);
+    }
+    if(L===12)out.push(["Entreprise+produit",code.slice(1,11)]);
+  }else if(L===14){out.push(["Type","GTIN-14 (carton / lot)"]);out.push(["Clé",checkOK(code)?"Valide":"Invalide"])}
+  else out.push(["Type",L+" chiffres (format non standard)"]);
+  return out;
+}
+function infoText(o){return o.map(function(x){return x[0]+" : "+x[1]}).join(" | ")}
+
+/* --- Liste des commentaires prédéfinis --- */
+var COMS=["1% HYDROGENE 95% ARGON B50","4% HYDROGENE 95% ARGON B50","5% HYDROGENE 95% ARGON TECHNIQUE B50","AIR SYNTHETIQUE 5.0 SANS HC B50","ARGON 4.6 CADRE 12 BOUTEILLES","ARGON 4.6 CHARGE B50","ARGON 5.7 HAUTE PURETE CHARGE B50","AZOTE 4.8 CHARGE B50","AZOTE 5.7 HAUTE PURETE CHARGE B50","CO2 SANS TUBE PLONGEUR 23KG","GAZ TRANSIT B01","GAZ TRANSIT B05","GAZ TRANSIT B10","GAZ TRANSIT B20","GAZ TRANSIT B50","HYDROGENE 5.2 CHARGE B20","OXYGENE 5.8 HAUTE PURETE CHARGE B50"];
+(function(){
+  var sel=$("dCom"), h='<option value="">— Choisissez un commentaire —</option>';
+  for(var i=0;i<COMS.length;i++)h+='<option value="'+esc(COMS[i])+'">'+esc(COMS[i])+"</option>";
+  h+='<option value="__libre__">Autre (commentaire libre)…</option>';
+  sel.innerHTML=h;
+})();
+$("dCom").onchange=function(){
+  var libre=this.value==="__libre__";
+  $("dComFree").style.display=libre?"block":"none";
+  $("dComFree").value="";
+  if(libre)setTimeout(function(){$("dComFree").focus()},50);
+};
+
+/* --- Dialogue de commentaire --- */
+function openDialog(code,fmt){
+  stopScan();
+  var a=analyse(code,fmt);
+  cur={code:code,format:fmt||"MANUEL",desc:infoText(a)};
+  $("dCode").textContent=code;
+  $("dInfo").innerHTML=a.map(function(x){return "<div><b>"+esc(x[0])+"</b> "+esc(x[1])+"</div>"}).join("");
+  $("dCom").value="";$("dComFree").value="";$("dComFree").style.display="none";
+  if($("dlg").showModal)$("dlg").showModal();else $("dlg").setAttribute("open","");
+  setTimeout(function(){$("dCom").focus()},50);
+}
+function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]})}
+function closeDialog(){if($("dlg").close)$("dlg").close();else $("dlg").removeAttribute("open")}
+$("save").onclick=function(){
+  var com=$("dCom").value;
+  if(com==="__libre__")com=$("dComFree").value.trim();
+  if(!com){say("Choisissez ou saisissez un commentaire.");return}
+  var t=new Date(), p=function(n){return String(n).padStart(2,"0")};
+  rows.push({date:t.getFullYear()+"-"+p(t.getMonth()+1)+"-"+p(t.getDate()),heure:p(t.getHours())+":"+p(t.getMinutes())+":"+p(t.getSeconds()),format:cur.format,code:cur.code,desc:cur.desc,com:com});
+  persist();render();closeDialog();say("Enregistré : "+cur.code);
+};
+$("cancel").onclick=function(){closeDialog();say("Annulé.")};
+
+/* --- Scan --- */
+function stopScan(){
+  clearInterval(timer);timer=null;
+  if(stream){stream.getTracks().forEach(function(t){t.stop()});stream=null}
+  if(h5){try{h5.stop()}catch(e){}h5=null}
+  $("cam").classList.remove("on");$("stop").hidden=true;$("scan").hidden=false;
+}
+$("stop").onclick=function(){stopScan();say("Scan arrêté.")};
+$("scan").onclick=async function(){
+  say("Ouverture de la caméra…");
+  try{
+    if("BarcodeDetector" in window){
+      var det=new BarcodeDetector();
+      stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"}},audio:false});
+      var v=$("vid");v.srcObject=stream;await v.play();
+      $("cam").classList.add("on");$("stop").hidden=false;$("scan").hidden=true;say("Placez le code devant la caméra.");
+      timer=setInterval(async function(){
+        try{var r=await det.detect(v);if(r.length){var c=r[0];openDialog(c.rawValue,c.format)}}catch(e){}
+      },300);
+    }else{
+      await loadLib();
+      $("stop").hidden=false;$("scan").hidden=true;say("Placez le code devant la caméra.");
+      h5=new Html5Qrcode("html5reader");
+      await h5.start({facingMode:"environment"},{fps:10,qrbox:{width:260,height:160}},function(txt,res){
+        var f=res&&res.result&&res.result.format&&res.result.format.formatName;
+        openDialog(txt,f||"");
+      },function(){});
+    }
+  }catch(e){
+    stopScan();
+    say("Caméra inaccessible ("+(e&&e.name?e.name:"erreur")+"). Autorisez la caméra ou saisissez le code à la main.");
+  }
+};
+function loadLib(){
+  return new Promise(function(ok,ko){
+    if(window.Html5Qrcode)return ok();
+    var s=document.createElement("script");
+    s.src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js";
+    s.onload=ok;s.onerror=function(){ko(new Error("lib"))};document.head.appendChild(s);
+  });
+}
+$("addManual").onclick=function(){
+  var c=$("manual").value.trim().toUpperCase();
+  if(!c){say("Saisissez un code.");return}
+  $("manual").value="";openDialog(c,"");
+};
+$("manual").oninput=function(){var s=this.selectionStart;this.value=this.value.toUpperCase();try{this.setSelectionRange(s,s)}catch(e){}};
+$("manual").onkeydown=function(e){if(e.key==="Enter")$("addManual").onclick()};
+
+/* --- Liste et CSV --- */
+function render(){
+  $("n").textContent=rows.length;
+  if(!rows.length){$("list").innerHTML='<div class="empty">Aucun enregistrement. Scannez un premier code.</div>';return}
+  var h="<table><thead><tr><th>Date</th><th>Heure</th><th>Code</th><th>Commentaire</th></tr></thead><tbody>";
+  for(var i=rows.length-1;i>=0;i--){var r=rows[i];
+    h+="<tr><td>"+r.date+"</td><td>"+r.heure+"</td><td class='code'>"+esc(r.code)+"</td><td class='c'>"+esc(r.com)+"</td></tr>"}
+  $("list").innerHTML=h+"</tbody></table>";
+}
+function q(s){return '"'+String(s).replace(/"/g,'""')+'"'}
+function toCSV(){
+  var l=["Date;Code;Commentaire"];
+  rows.forEach(function(r){l.push([r.date.split("-").reverse().join("/"),q(r.code),q(r.com)].join(";"))});
+  return l.join("\r\n");
+}
+$("csv").onclick=function(){
+  if(!rows.length){say("Rien à exporter.");return}
+  var name="codes-barres-"+rows[rows.length-1].date+".csv";
+  var blob=new Blob(["\ufeff"+toCSV()],{type:"text/csv;charset=utf-8"});
+  try{
+    var f=new File([blob],name,{type:"text/csv"});
+    if(navigator.canShare&&navigator.canShare({files:[f]})){navigator.share({files:[f],title:name}).catch(function(){});return}
+  }catch(e){}
+  var a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();a.remove();
+  say("Si rien ne se télécharge, utilisez « Copier le CSV ».");
+};
+$("copy").onclick=function(){
+  if(!rows.length){say("Rien à copier.");return}
+  var t=toCSV();
+  (navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).then(function(){say("CSV copié. Collez-le dans un fichier .csv.")},function(){
+    var ta=document.createElement("textarea");ta.value=t;document.body.appendChild(ta);ta.select();
+    try{document.execCommand("copy");say("CSV copié.")}catch(e){say("Copie impossible.")}ta.remove();
+  });
+};
+$("clear").onclick=function(){
+  if(rows.length&&confirm("Supprimer les "+rows.length+" enregistrements ? Exportez d'abord le CSV."))
+  {rows=[];persist();render();say("Registre vidé.")}
+};
+render();
+})();
+</script>
+</body>
+</html>
