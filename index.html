@@ -63,7 +63,7 @@ label{display:block;font-weight:600;margin:8px 0 6px}
 
 <h2>Enregistrements (<span id="n">0</span>)</h2>
 <div class="row">
-  <button id="csv">Télécharger le CSV</button>
+  <button id="csv">Exporter le CSV</button>
   <button id="copy" class="sec">Copier le CSV</button>
   <button id="clear" class="sec">Vider</button>
 </div>
@@ -129,7 +129,7 @@ function analyse(code,fmt){
 function infoText(o){return o.map(function(x){return x[0]+" : "+x[1]}).join(" | ")}
 
 /* --- Liste des commentaires prédéfinis --- */
-var COMS=["1% HYDROGENE 95% ARGON B50","4% HYDROGENE 95% ARGON B50","5% HYDROGENE 95% ARGON TECHNIQUE B50","AIR SYNTHETIQUE 5.0 SANS HC B50","ARGON 4.6 CADRE 12 BOUTEILLES","ARGON 4.6 CHARGE B50","ARGON 5.7 HAUTE PURETE CHARGE B50","AZOTE 4.8 CHARGE B50","AZOTE 5.7 HAUTE PURETE CHARGE B50","CO2 SANS TUBE PLONGEUR 23KG","HELIUM 4.6 CHARGE B50","HELIUM 5.2 HAUTE PURETE CHARGE B50","HYDROGENE 5.2 CHARGE B20","OXYGENE 5.8 HAUTE PURETE CHARGE B50"];
+var COMS=["1% HYDROGENE 95% ARGON B50","4% HYDROGENE 95% ARGON B50","5% HYDROGENE 95% ARGON TECHNIQUE B50","AIR SYNTHETIQUE 5.0 SANS HC B50","ARGON 4.6 CADRE 12 BOUTEILLES","ARGON 4.6 CHARGE B50","ARGON 5.7 HAUTE PURETE CHARGE B50","AZOTE 4.8 CHARGE B50","AZOTE 5.7 HAUTE PURETE CHARGE B50","CO2 SANS TUBE PLONGEUR 23KG","GAZ TRANSIT B01","GAZ TRANSIT B05","GAZ TRANSIT B10","GAZ TRANSIT B20","GAZ TRANSIT B50","HYDROGENE 5.2 CHARGE B20","OXYGENE 5.8 HAUTE PURETE CHARGE B50"];
 (function(){
   var sel=$("dCom"), h='<option value="">— Choisissez un commentaire —</option>';
   for(var i=0;i<COMS.length;i++)h+='<option value="'+esc(COMS[i])+'">'+esc(COMS[i])+"</option>";
@@ -230,13 +230,31 @@ function toCSV(){
   rows.forEach(function(r){l.push([r.date.split("-").reverse().join("/"),q(r.code),q(r.com)].join(";"))});
   return l.join("\r\n");
 }
-$("csv").onclick=function(){
+$("csv").onclick=async function(){
   if(!rows.length){say("Rien à exporter.");return}
   var name="codes-barres-"+rows[rows.length-1].date+".csv";
-  var blob=new Blob(["\ufeff"+toCSV()],{type:"text/csv;charset=utf-8"});
+  var t=toCSV();
+  var Cap=window.Capacitor;
+  if(Cap&&Cap.isNativePlatform&&Cap.isNativePlatform()&&Cap.Plugins&&Cap.Plugins.Filesystem&&Cap.Plugins.Share){
+    try{
+      var FS=Cap.Plugins.Filesystem,SH=Cap.Plugins.Share;
+      var res=await FS.writeFile({path:name,data:"\ufeff"+t,directory:"CACHE",encoding:"utf8"});
+      await SH.share({title:name,text:name,files:[res.uri],dialogTitle:"Exporter le CSV"});
+      say("Exporté : "+name);
+    }catch(e){say("Export annulé.")}
+    return;
+  }
+  var blob=new Blob(["\ufeff"+t],{type:"text/csv;charset=utf-8"});
   try{
     var f=new File([blob],name,{type:"text/csv"});
-    if(navigator.canShare&&navigator.canShare({files:[f]})){navigator.share({files:[f],title:name}).catch(function(){});return}
+    if(navigator.canShare&&navigator.canShare({files:[f]})){
+      navigator.share({files:[f],title:name}).then(function(){say("Exporté : "+name)},function(){say("Export annulé.")});
+      return;
+    }
+    if(navigator.share){
+      navigator.share({title:name,text:t}).then(function(){say("Exporté en texte.")},function(){say("Export annulé.")});
+      return;
+    }
   }catch(e){}
   var a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();a.remove();
   say("Si rien ne se télécharge, utilisez « Copier le CSV ».");
